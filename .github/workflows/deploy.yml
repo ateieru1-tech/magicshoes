@@ -1,0 +1,50 @@
+name: Publish Magicshoes
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: magicshoes-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish to magicshoes.ro
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out website
+        uses: actions/checkout@v6
+      - name: Prepare public files
+        run: |
+          mkdir -p .deploy/assets
+          cp index.html styles.css app.js robots.txt sitemap.xml .deploy/
+          cp assets/*.webp assets/*.png .deploy/assets/
+          python3 - <<'PY'
+          import json
+          from html.parser import HTMLParser
+          from pathlib import Path
+          root = Path('.deploy')
+          class Check(HTMLParser):
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  path = attrs.get('src') or (attrs.get('href') if tag == 'link' else None)
+                  if path and not path.startswith(('https:', 'http:', '#', 'data:')):
+                      assert (root / path.split('?')[0]).is_file(), f'Missing file: {path}'
+          html = (root / 'index.html').read_text()
+          Check().feed(html)
+          marker = '<script type="application/ld+json">'
+          json.loads(html.split(marker, 1)[1].split('</script>', 1)[0])
+          print('Website files and business information checked.')
+          PY
+      - name: Deploy to existing Cloudflare Pages project
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 917aa7e4f9f063098f4d98a9bed83db1
+          command: pages deploy .deploy --project-name=magicshoes-oradea --branch=main
